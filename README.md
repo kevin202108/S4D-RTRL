@@ -37,12 +37,12 @@ S4D-RTRL/
 ├── rtrl_rflo_full.py        # exact forward-mode RFLO/RTRL on the full S4D DPD
 │                            #   (Gate A: port parity, B: RFLO vs BPTT gradients,
 │                            #    C: online ILA adaptation RFLO vs BPTT)
-├── online_adaptation.py         # online adaptation reaches the offline s4d_best
+├── online_adaptation.py     # online adaptation reaches the offline s4d_best
 ├── online_ila.py            # indirect-learning (post-inverse) online loop
 ├── ila_frontend.py          # loop alignment: integer/fractional delay + gain
-├── drift_tracking.py          # drift tracking: frozen vs periodic vs streaming
-├── fixedpoint_sweep.py     # fixed-point wordlength sweep (8-bit learning path)
-├── fixedpoint_drift.py          # hardware-scoped drift tracking, 8-bit ≡ float
+├── drift_tracking.py        # drift tracking: frozen vs periodic vs streaming
+├── fixedpoint_sweep.py      # fixed-point wordlength sweep (8-bit learning path)
+├── fixedpoint_drift.py      # hardware-scoped drift tracking, 8-bit ≡ float
 ├── gmp_baseline.py          # RLS-GMP polynomial baseline / class ceiling
 ├── figures/                 # fig_architecture.png (diagram) + fig_wordlength.py (plot)
 └── opendpd/                 # vendored OpenDPD subset (see Attribution)
