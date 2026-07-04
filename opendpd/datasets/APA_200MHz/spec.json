@@ -1,0 +1,26 @@
+{
+    "description": "5-carrier LTE 20MHz (TM3.1a 256QAM), APA device. Generated at 491.52MHz (SCS=15kHz), transmitted/captured at 983.04MHz (effective SCS=30kHz, BW=200MHz).",
+    "dataset_format": "split_csv",
+    "split_ratios": {
+        "train": 0.6,
+        "val": 0.2,
+        "test": 0.2
+    },
+
+    "input_signal_fs": 983.04e6,
+    "bw_main_ch": 200e6,
+    "bw_sub_ch": 40e6,
+    "n_sub_ch": 5,
+    "nperseg": 19662,
+
+    "standard": "LTE",
+    "modulation": "256QAM",
+    "test_model": "TM3.1a",
+    "papr_db": 10.0,
+
+    "scs": 30e3,
+    "ofdm_nfft": 32768,
+    "n_active": 600,
+    "cp_first": 2560,
+    "cp_other": 2304
+}

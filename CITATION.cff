@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "S4D-RTRL: Streaming online adaptation for neural digital predistortion via an exact O(N) RTRL learning path"
+authors:
+  - family-names: Fan
+    given-names: Kai-Chun
+repository-code: "https://github.com/kevin202108/S4D-RTRL"
+license: Apache-2.0
+version: "0.1.0"
+date-released: "2026-07-04"
+keywords:
+  - digital predistortion
+  - power amplifier
+  - state-space model
+  - real-time recurrent learning
+  - online learning

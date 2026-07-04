@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "s4d-rtrl"
+version = "0.1.0"
+description = "Streaming online adaptation for neural DPD: S4D with an exact O(N) RTRL learning path"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Kai-Chun Fan" }]
+dependencies = [
+    "numpy>=2.0.0",
+    "torch==2.6.0",
+    "pandas>=2.0",
+    "matplotlib>=3.7",
+    "scipy>=1.11",
+]
+
+# The vendored OpenDPD subset lives under opendpd/ and is exposed as the
+# top-level modules the experiment scripts import (`import models`,
+# `from backbones.s4d import ...`, `from modules.data_collector import ...`,
+# `from utils.metrics import ...`). `pip install -e .` / `uv sync` puts them
+# on the path; checkpoints and datasets resolve relative to models.__file__.
+[tool.setuptools]
+py-modules = ["models"]
+packages = ["backbones", "modules", "utils"]
+
+[tool.setuptools.package-dir]
+"" = "opendpd"
+
+# --- GPU (NVIDIA cu124) torch, optional -------------------------------------
+# Mirrors the wheel used to train the checkpoints. On a CPU-only machine,
+# delete the two [tool.uv.*] blocks below and torch falls back to the CPU
+# wheel from PyPI (the reproduction scripts run on CPU).
+[tool.uv.sources]
+torch = { index = "pytorch-cu124" }
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true

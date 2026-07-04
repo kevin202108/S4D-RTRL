@@ -1,0 +1,38 @@
+S4D-RTRL
+Copyright 2026 Kai-Chun Fan
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+--------------------------------------------------------------------------------
+Third-party attribution
+--------------------------------------------------------------------------------
+
+This product includes software developed as part of OpenDPD
+(https://github.com/lab-emi/OpenDPD), Copyright 2024 Yizhuo Wu, Chang Gao,
+licensed under the Apache License, Version 2.0.
+
+The following files under opendpd/ are taken from OpenDPD and retain their
+original copyright and license headers:
+
+  opendpd/models.py                  MODIFIED: registered the S4D backbone
+                                     family (s4d / s4d_best / s4d_* ablations)
+                                     in the CoreModel dispatch.
+  opendpd/backbones/dgru.py          unmodified (DGRU PA-surrogate backbone)
+  opendpd/backbones/rvtdcnn.py       unmodified
+  opendpd/backbones/__init__.py      unmodified
+  opendpd/modules/data_collector.py  unmodified
+  opendpd/modules/__init__.py        unmodified
+  opendpd/utils/metrics.py           unmodified (NMSE / EVM / ACLR)
+  opendpd/utils/__init__.py          unmodified
+  opendpd/datasets/APA_200MHz/       measured 3.5 GHz GaN Doherty PA dataset
+                                     from OpenDPD.
+  opendpd/save/APA_200MHz/           pretrained PA-surrogate and offline DPD
+                                     checkpoints produced with the OpenDPD
+                                     pipeline.
+
+opendpd/backbones/s4d.py is an original S4D backbone authored by Kai-Chun Fan,
+written as an extension to OpenDPD.
+
+All other files (rtrl_rflo_full.py, online_adaptation.py, online_ila.py,
+ila_frontend.py, drift_tracking.py, fixedpoint_sweep.py, fixedpoint_drift.py,
+gmp_baseline.py, figures/*) are original work by Kai-Chun Fan.

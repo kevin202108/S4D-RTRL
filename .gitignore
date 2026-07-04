@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Editor / OS
+.ipynb_checkpoints/
+.DS_Store
+
+# Note: pretrained checkpoints (opendpd/save/**.pt), the APA_200MHz dataset
+# (opendpd/datasets/**), and rendered figures (figures/*.png) are TRACKED on
+# purpose so the repo reproduces end-to-end out of the box.
