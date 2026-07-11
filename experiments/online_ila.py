@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-online_ila.py -- Stage 1 ILA variant: online adaptation WITHOUT a PA gradient.
+online_ila.py -- ILA variant: online adaptation WITHOUT a PA gradient.
 
 This is the HARDWARE-FAITHFUL path. A real chip cannot backprop through the
 physical PA, so DLA (online_adaptation.py) is not deployable as-is. ILA instead trains
@@ -15,13 +15,14 @@ a POST-INVERSE from the observed PA output back to its input:
 
 Key contrast with DLA: the gradient graph is M(z)->loss only. z and xpd are DATA
 (detached). The PA is used purely forward. This is what a feedback-receiver DPD
-loop does in silicon, and it's why the O(1) forward-mode RTRL gradient (proven in
-rtrl_kernel_check.py) is the right hardware primitive.
+loop does in silicon, and it is why the O(1) forward-mode RTRL gradient (verified
+against autograd to machine precision) is the right hardware primitive.
 
 Reuses online_adaptation.py's paper-faithful eval + models + ila_frontend aligner.
-Run:  uv run online_ila.py
+Run:  uv run experiments/online_ila.py
 """
 import copy
+import os
 import numpy as np
 import torch
 
@@ -112,11 +113,15 @@ def main():
     gap = best["ACLR"] - base["ACLR"]
     print(f"\n[result] ILA online best: ACLR={best['ACLR']:.2f}  EVM={best['EVM']:.2f}  NMSE={best['NMSE']:.2f} dB")
     print(f"         offline base     : ACLR={base['ACLR']:.2f}  EVM={base['EVM']:.2f}  NMSE={base['NMSE']:.2f} dB")
-    print(f"         (DLA online ref  : ACLR -50.49  EVM -47.56 dB)")
+    print(f"         (DLA online ref  : ACLR -50.46  EVM -47.44 dB, online_adaptation.py)")
     verdict = "CONVERGED" if abs(gap) < 1.5 else f"gap {gap:+.2f} dB"
     print(f"         ACLR gap to offline = {gap:+.2f} dB  ({verdict})")
-    torch.save(M.state_dict(), "dpd_ila_best.pt")
-    print("  saved best ILA DPD -> dpd_ila_best.pt")
+    HERE = os.path.dirname(os.path.abspath(__file__))
+    ROOT = os.path.dirname(HERE)
+    out_dir = os.path.join(ROOT, "results")
+    os.makedirs(out_dir, exist_ok=True)
+    torch.save(M.state_dict(), os.path.join(out_dir, "dpd_ila_best.pt"))
+    print("  saved best ILA DPD -> results/dpd_ila_best.pt")
 
 
 if __name__ == "__main__":

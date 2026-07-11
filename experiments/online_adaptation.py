@@ -1,26 +1,34 @@
 #!/usr/bin/env python3
 """
-online_adaptation.py -- Stage 1: online adaptation reaches offline s4d_best.
+online_adaptation.py -- online adaptation reaches the offline s4d_best optimum.
 
 Does adapting the DPD ONLINE (streaming, one small update at a time) converge to
 the same ACLR/EVM as the frozen offline `s4d_best`?
 
-Reframing (why autograd, not the RTRL sensitivity code, is used here):
-    RTRL == the true gradient at machine precision (rtrl_kernel_check.py: 4.9e-17).
-    RTRL's value is O(1)-memory FORWARD-MODE for HARDWARE. The software convergence
-    study only needs the true gradient -> autograd. DLA (backprop through the frozen
-    differentiable PA) is the sanity floor; ILA (no PA gradient) is the hardware path.
+This module is also the shared configuration hub: it owns the PA/DPD pairing, the
+checkpoint paths, and the metric band parameters that every other experiment imports.
 
-Eval matches OpenDPD EXACTLY so numbers are comparable to the paper:
+Reframing (why autograd, not the RTRL sensitivity code, is used here):
+    RTRL == the true gradient at machine precision (verified against autograd on the
+    real S4D kernel: 4.9e-17).  RTRL's value is O(1)-memory FORWARD-MODE for HARDWARE.
+    The software convergence study only needs the true gradient -> autograd.  DLA
+    (backprop through the frozen differentiable PA) is the sanity floor; ILA (no PA
+    gradient) is the hardware path.
+
+Eval matches OpenDPD EXACTLY so the numbers are comparable:
     * DPD target = target_gain * X   (target_gain = mean max|y|/max|x| over train)
     * metric band params (fs, bw, n_sub_ch, nperseg) READ FROM datasets/*/spec.json
       -- for APA_200MHz: fs=983.04MHz, n_sub_ch=5, nperseg=19662 (NOT the util
       defaults 800MHz/10/2560, which were the whole EVM discrepancy).
     * metrics = OpenDPD utils.metrics on (prediction, target), no extra alignment
-Reference (OpenDPD's own log, s4d_best seed0): ACLR -51.26, EVM -46.43 dB.
-Reproduced here: baseline ACLR -51.23, EVM -48.22 dB.
 
-Run:  uv run online_adaptation.py
+Baseline, frozen offline s4d_best over the full X_te (one 19662-sample segment),
+on the checkpoints shipped in opendpd/save/:
+    NMSE -42.778   ACLR -50.788   EVM -47.599 dB
+Reference (OpenDPD's own log, s4d_best seed0): ACLR -51.26, EVM -46.43 dB.
+Re-measure rather than trust a comment.
+
+Run:  uv run experiments/online_adaptation.py
 """
 import os
 import json
@@ -33,12 +41,31 @@ from modules.data_collector import load_dataset
 from utils.metrics import NMSE, EVM, ACLR
 
 DATASET = "APA_200MHz"
+HERE = os.path.dirname(os.path.abspath(__file__))
 OPENDPD_ROOT = os.path.dirname(os.path.abspath(model.__file__))
-PA_CKPT = os.path.join(OPENDPD_ROOT, "save", DATASET, "train_pa",
-                       "PA_S_0_M_DGRU_H_30_F_200_P_4424.pt")
-DPD_CKPT = os.path.join(OPENDPD_ROOT, "save", DATASET, "train_dpd",
-                        "PA_S_0_M_DGRU_H_30_F_200",
-                        "DPD_S_0_M_S4D_BEST_H_8_F_200_P_1048.pt")
+
+
+def _ckpt(rel):
+    """Resolve a checkpoint under the vendored opendpd/save/ tree."""
+    return os.path.join(OPENDPD_ROOT, "save", rel)
+
+
+# The PA proxy and its offline DPD are ONE choice, never two.  Selecting a PA without
+# its matched DPD silently starts adaptation ~10 dB off that PA's own optimum, and the
+# run then measures recovery from a bad initial condition instead of whatever it claims
+# to measure.  Adding a PA proxy therefore means adding BOTH entries below AND training
+# the s4d_best DPD that is paired with it.
+_PA_ZOO = {
+    "dgru": ("PA_S_0_M_DGRU_H_30_F_200_P_4424.pt", "PA_S_0_M_DGRU_H_30_F_200"),
+}
+PA_TYPE = os.environ.get("S4D_PA", "dgru")
+if PA_TYPE not in _PA_ZOO:
+    raise ValueError(f"S4D_PA={PA_TYPE!r} not in {sorted(_PA_ZOO)}")
+_pa_file, _dpd_dir = _PA_ZOO[PA_TYPE]
+
+PA_CKPT = _ckpt(os.path.join(DATASET, "train_pa", _pa_file))
+DPD_CKPT = _ckpt(os.path.join(DATASET, "train_dpd", _dpd_dir,
+                              "DPD_S_0_M_S4D_BEST_H_8_F_200_P_1048.pt"))
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # metric band params come from the dataset spec (NOT the util defaults!)
@@ -50,7 +77,7 @@ NPERSEG = int(_SPEC["nperseg"])             # 19662 (whole test seq = 1 segment)
 
 
 def make_pa():
-    pa = model.CoreModel(input_size=2, hidden_size=30, num_layers=1, backbone_type="dgru")
+    pa = model.CoreModel(input_size=2, hidden_size=30, num_layers=1, backbone_type=PA_TYPE)
     pa.load_state_dict(torch.load(PA_CKPT, map_location="cpu"))
     for p in pa.parameters():
         p.requires_grad = False
@@ -60,6 +87,13 @@ def make_pa():
 def make_dpd(load_offline=False):
     dpd = model.CoreModel(input_size=2, hidden_size=8, num_layers=2, backbone_type="s4d_best")
     if load_offline:
+        if not os.path.exists(DPD_CKPT):
+            raise FileNotFoundError(
+                f"No offline DPD paired with PA {PA_TYPE!r}: {DPD_CKPT}\n"
+                f"Train it first with OpenDPD (DLA, float32, s4d_best, OpenDPD defaults):\n"
+                f"  main.py --dataset_name {DATASET} --step train_dpd --accelerator cpu "
+                f"--PA_backbone {PA_TYPE} --PA_hidden_size 30 "
+                f"--DPD_backbone s4d_best --DPD_hidden_size 8 --DPD_num_layers 2")
         dpd.load_state_dict(torch.load(DPD_CKPT, map_location="cpu"))
     return dpd.to(DEVICE)
 
@@ -149,8 +183,11 @@ def main():
     print(f"         offline base : ACLR={base['ACLR']:.2f}  EVM={base['EVM']:.2f}  NMSE={base['NMSE']:.2f} dB")
     verdict = "CONVERGED" if abs(gap) < 1.0 else f"gap {gap:+.2f} dB -- raise EPOCHS / tune LR"
     print(f"         ACLR gap to offline = {gap:+.2f} dB  ({verdict})")
-    torch.save(dpd.state_dict(), "dpd_online_best.pt")
-    print("  saved best online DPD -> dpd_online_best.pt")
+    ROOT = os.path.dirname(HERE)
+    out_dir = os.path.join(ROOT, "results")
+    os.makedirs(out_dir, exist_ok=True)
+    torch.save(dpd.state_dict(), os.path.join(out_dir, "dpd_online_best.pt"))
+    print("  saved best online DPD -> results/dpd_online_best.pt")
 
 
 if __name__ == "__main__":

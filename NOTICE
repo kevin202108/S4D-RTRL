@@ -33,6 +33,5 @@ original copyright and license headers:
 opendpd/backbones/s4d.py is an original S4D backbone authored by Kai-Chun Fan,
 written as an extension to OpenDPD.
 
-All other files (rtrl_rflo_full.py, online_adaptation.py, online_ila.py,
-ila_frontend.py, drift_tracking.py, fixedpoint_sweep.py, fixedpoint_drift.py,
-gmp_baseline.py, figures/*) are original work by Kai-Chun Fan.
+All other files (everything under experiments/ and figures/) are original work
+by Kai-Chun Fan.

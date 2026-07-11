@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-gmp_baseline.py -- RLS-GMP polynomial baseline / class ceiling.
+gmp_baseline.py -- the novelty litmus test: can a polynomial baseline do this too?
 
 Traditional adaptive DPD = ILA + RLS on a GMP / memory-polynomial basis (the
 textbook baseline; RLS with a forgetting factor tracks a time-varying PA). We run
-it through the SAME nominal PA (Stage-1) and the SAME drift (Stage-2) as S4D-RTRL,
+it through the SAME nominal PA and the SAME drift as S4D-RTRL,
 and compare on: linearization (ACLR/EVM), parameter count, and drift tracking.
 
 The claim being tested: a complex diagonal SSM adapted by O(1) forward-mode RTRL
@@ -12,7 +12,7 @@ linearizes this wideband measured PA BETTER at comparable/fewer parameters than
 RLS-GMP, and RLS is O(P^2)/sample vs RTRL's O(N).
 
 RLS/GMP core validated on a synthetic Hammerstein PA (lin.NMSE -67.9 dB).
-Run:  uv run gmp_baseline.py
+Run:  uv run experiments/gmp_baseline.py
 """
 import numpy as np
 import torch
@@ -81,7 +81,7 @@ def train_ila_rls(pa_fn, X_tr, M, K, lam=1.0, n_iter=3, Ttrain=15000):
 
 def main():
     torch.manual_seed(0)
-    print(f"device = {DEVICE}  |  J3: RLS-GMP vs S4D-RTRL")
+    print(f"device = {DEVICE}  |  RLS-GMP vs S4D-RTRL")
     X_tr, y_tr, *_r, X_te, y_te = load_dataset(dataset_name=DATASET)
     X_tr = np.asarray(X_tr, np.float32); X_te = np.asarray(X_te, np.float32)
     tg = target_gain_of(X_tr, np.asarray(y_tr, np.float32))
@@ -96,7 +96,8 @@ def main():
         w, P = train_ila_rls(pa0, X_tr, M, K, lam=1.0, n_iter=3)
         m = gmp_metrics(w, M, K, pa0, X_te, tg)
         print(f"{str((M,K)):>12} {P:>8} {2*P:>12} {m['ACLR']:>8.2f} {m['EVM']:>8.2f}")
-    print("  S4D-RTRL (ILA) reference:  1048 real params   ACLR  -49.75   EVM  -47.22")
+    print("  S4D-RTRL (ILA) reference:  1048 real params   ACLR  -50.44   EVM  -47.22"
+          "   (online_ila.py)")
 
     # ---- 2) DRIFT tracking: RLS-GMP (forgetting) vs S4D online ----
     Mg, Kg, lam = 11, 7, 0.9995                    # representative GMP + forgetting factor
@@ -123,7 +124,8 @@ def main():
     a = np.array(hist["ACLR"]); e = np.array(hist["EVM"])
     print(f"\n  RLS-GMP  drift: ACLR mean/final/worst {a.mean():.1f}/{a[-1]:.1f}/{a.max():.1f}  "
           f"EVM {e.mean():.1f}/{e[-1]:.1f}/{e.max():.1f}")
-    print("  S4D-RTRL drift: ACLR mean/final/worst -41.6/-40.0/-28.3  EVM -33.2/-33.1/-14.7  (Stage 2)")
+    print("  S4D-RTRL drift: ACLR mean/final/worst -41.3/-39.4/-28.2  EVM -33.2/-33.5/-14.7"
+          "  (drift_tracking.py)")
 
 
 if __name__ == "__main__":

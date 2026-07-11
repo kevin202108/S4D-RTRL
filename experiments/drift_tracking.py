@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-drift_tracking.py -- Stage 2: PA drift tracking (the selling point).
+drift_tracking.py -- PA drift tracking (the selling point).
 
 Claim to prove: under a TIME-VARYING PA, a FROZEN DPD degrades, while ONLINE ILA
 (the on-chip RTRL path, no gradient through the PA) tracks the drift and holds
@@ -19,11 +19,16 @@ Strategies (identical ILA learning; only the CADENCE differs):
     periodic : big ILA burst every K blocks (host recal), else nothing
     online   : a few ILA steps every block (continuous, small-lr tracking)
 
-Run:  uv run drift_tracking.py   (saves drift_tracking.png)
+Run:  uv run experiments/drift_tracking.py   (saves results/drift_tracking.png)
 """
 import copy
+import os
 import numpy as np
 import torch
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+RESULTS_DIR = os.path.join(ROOT, "results")
 
 from online_adaptation import (make_pa, make_dpd, target_gain_of, segment,
                            DATASET, DEVICE, FS, BW, NSUB, NPERSEG)
@@ -36,38 +41,19 @@ RETRAIN_EVERY = 6                # periodic host recal cadence (blocks)
 rng = np.random.default_rng(0)
 
 
+import drift_models
+
+# Which PA-drift operator this run uses.  'memoryless' is the historical behaviour,
+# bit-for-bit; see drift_models.py for why the memory-drifting arms exist.
+DRIFT_KIND = "memoryless"
+
+
 def drift_params(blk):
-    """Return (A, phi, b3, ampm): small LINEAR gain/phase drift + growing
-    NONLINEAR 3rd-order AM-AM (b3) and AM-PM (ampm) -- the nonlinear part is what
-    creates spectral regrowth (ACLR) that the DPD must chase."""
-    dl = blk / (N_BLOCKS - 1)            # 0 -> 1 ramp
-    A = 1.0 - 0.05 * dl                  # up to 5% gain droop (linear, hits EVM)
-    phi = 0.10 * dl                      # up to 0.10 rad phase drift (linear)
-    b3 = 0.14 * dl                       # 3rd-order AM-AM growth (nonlinear -> ACLR)
-    ampm = 0.18 * dl                     # 3rd-order AM-PM growth (nonlinear -> ACLR)
-    if blk >= STEP_BLK:                  # mid-run bias step = nonlinearity jump
-        A *= 0.97; phi += 0.05
-        b3 += 0.05; ampm += 0.07
-    return A, phi, b3, ampm
+    return drift_models.drift_params(blk, N_BLOCKS, STEP_BLK)
 
 
 def make_pa_fn(pa, blk):
-    """Forward-only drifted PA operator: (B,T,2) -> (B,T,2).
-    drifted = g_lin * ( y + (b3 + j*ampm) * y|y|^2 )  -- complex 3rd-order term
-    gives both AM-AM and AM-PM regrowth; |y|^2 normalized by nominal mean power."""
-    A, phi, b3, ampm = drift_params(blk)
-    g = complex(A * np.cos(phi), A * np.sin(phi))
-    c3 = complex(b3, ampm)
-
-    def pa_fn(xpd):
-        with torch.no_grad():
-            y = pa(xpd)
-        yc = y[..., 0] + 1j * y[..., 1]
-        p = (yc.abs() ** 2)
-        p = p / (p.mean() + 1e-12)                    # normalize power -> stable coeff scale
-        yc = g * (yc + c3 * yc * p)
-        return torch.stack([yc.real, yc.imag], dim=-1)
-    return pa_fn
+    return drift_models.make_drift(pa, blk, N_BLOCKS, STEP_BLK, kind=DRIFT_KIND)
 
 
 @torch.no_grad()
@@ -98,7 +84,7 @@ def ila_update(M, pa_fn, x_full, opt, n_frames, fl=500):
 
 def main():
     torch.manual_seed(0)
-    print(f"device = {DEVICE}  |  Stage 2: PA drift tracking")
+    print(f"device = {DEVICE}  |  PA drift tracking")
 
     X_tr, y_tr, *_rest, X_te, y_te = load_dataset(dataset_name=DATASET)
     X_tr = np.asarray(X_tr, np.float32); X_te = np.asarray(X_te, np.float32)
@@ -163,8 +149,10 @@ def main():
             a.set_xlabel("time block (increasing PA drift)"); a.set_ylabel(ttl)
             a.grid(alpha=0.3); a.legend(fontsize=8)
         ax[0].set_title("PA drift tracking: frozen vs periodic vs online-ILA")
-        fig.tight_layout(); fig.savefig("drift_tracking.png", dpi=130)
-        print("\n  saved plot -> drift_tracking.png")
+        fig.tight_layout()
+        os.makedirs(RESULTS_DIR, exist_ok=True)
+        fig.savefig(os.path.join(RESULTS_DIR, "drift_tracking.png"), dpi=130)
+        print("\n  saved plot -> results/drift_tracking.png")
     except Exception as e:
         print(f"\n  (plot skipped: {e})")
 

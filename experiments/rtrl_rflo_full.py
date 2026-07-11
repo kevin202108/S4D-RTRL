@@ -3,15 +3,15 @@
 rtrl_rflo_full.py -- Task: rerun the online loop with the REAL forward-mode RTRL
 sensitivity (not reverse-mode autograd) on the FULL-CAPACITY s4d_best DPD.
 
-Scope follows the design-space decisions (docs/rtrl_design_space.md):
-  B1  Re/Im split-real gradient convention (matches rtrl_dpd.py / hardware).
-  B2  RFLO-style layer-local RTRL: exact within each diagonal SSM layer, keeps the
-      SAME-timestep cross-layer path (pointwise, hardware computes it in-cycle),
-      truncates only the delayed cross-layer paths (layer-1 params through the
-      layer-2 state at later times). Gate: cosine vs BPTT truth > 0.99.
-  C1/D7  Learn the DISCRETE (Abar, C_eff) directly (no exp/log on update path).
-  C2  Adaptation set = {Abar, C_eff} of both layers. C5: pointwise/FFN frozen.
-  H1  Pole projection |Abar| <= 0.995 after each update.
+Scope follows these design decisions, each chosen for the hardware:
+  * Re/Im split-real gradient convention (matches the hardware datapath).
+  * RFLO-style layer-local RTRL: exact within each diagonal SSM layer, keeps the
+    SAME-timestep cross-layer path (pointwise, hardware computes it in-cycle),
+    truncates only the delayed cross-layer paths (layer-1 params through the
+    layer-2 state at later times).  Gate: cosine vs BPTT truth > 0.99.
+  * Learn the DISCRETE (Abar, C_eff) directly -- no exp/log on the update path.
+  * Adaptation set = {Abar, C_eff} of both layers; the pointwise/FFN stack is frozen.
+  * Pole projection |Abar| <= 0.995 after each update.
 
 Gates (each prints PASS/FAIL, script exits nonzero on failure):
   A  float64 port parity: custom streaming forward == S4D_DPD.forward (float32 tol)
@@ -21,8 +21,9 @@ Gates (each prints PASS/FAIL, script exits nonzero on failure):
        RFLO-updates run vs BPTT-updates run, same frames/lr -> final linearization
        metrics within 0.5 dB, poles stable throughout.
 
-CPU + float64 on purpose (GPU is busy with the J4 PA-modeling queue; this is a
-correctness experiment, not a speed one).  Run:  uv run rtrl_rflo_full.py
+CPU + float64 on purpose: this is a correctness experiment, not a speed one.
+
+Run:  uv run experiments/rtrl_rflo_full.py
 """
 import copy
 import json
@@ -95,7 +96,7 @@ def pw(x, W, b):                                             # x (...,Cin) -> (.
 def head_t(P, Ab1, Ce1, Ab2, Ce2, h0, ft, s1p, s2p, qf=None):
     """One (batched-over-time OK) step of the full pointwise chain given previous
     states as CONSTANTS. Returns (s1, s2, out). All ops are same-timestep.
-    qf: optional state quantizer (Stage 3 fixed-point in-the-loop hook)."""
+    qf: optional state quantizer (fixed-point in-the-loop hook)."""
     s1 = Ab1 * s1p + h0.unsqueeze(-1)
     if qf is not None:
         s1 = qf(s1)
@@ -186,7 +187,7 @@ def rflo_grads(P, Ab1, Ce1, Ab2, Ce2, z, tgt,
     s1p = S1p.reshape(B * T, *S1p.shape[2:])
     s2p = S2p.reshape(B * T, *S2p.shape[2:])
     if in_grads:
-        # C2(3): input_proj Win/bin adapted. Split h0 to avoid double counting:
+        # input_proj Win/bin adapted. Split h0 to avoid double counting:
         # the s1-recurrence term uses the CONSTANT h0 (its Win-dependence is carried
         # by the eligibility trace below); the residual path uses the Win-leaf graph
         # version, so autograd gives exactly the non-s1 instantaneous part.
@@ -202,7 +203,7 @@ def rflo_grads(P, Ab1, Ce1, Ab2, Ce2, z, tgt,
     PW_KEYS = ('Wm1', 'bm1', 'Wf1_1', 'bf1_1', 'Wf2_1', 'bf2_1',
                'Wm2', 'bm2', 'Wf1_2', 'bf1_2', 'Wf2_2', 'bf2_2')
     if pw_grads:
-        # C5 relaxed: pointwise mixing/FFN params adapted. They are STATELESS
+        # pointwise mixing/FFN params adapted (the relaxed set). They are STATELESS
         # (per-timestep), so grads are instantaneous -- same-timestep exact,
         # delayed cross-layer paths truncated (same RFLO caveat as C_eff^1).
         PL = {}
@@ -259,7 +260,7 @@ def rflo_grads(P, Ab1, Ce1, Ab2, Ce2, z, tgt,
         l1R, l1I, l2R, l2I = qf_lam(l1R), qf_lam(l1I), qf_lam(l2R), qf_lam(l2I)
     l1R = l1R.reshape(B, T, *l1R.shape[1:]); l1I = l1I.reshape(B, T, *l1I.shape[1:])
     l2R = l2R.reshape(B, T, *l2R.shape[1:]); l2I = l2I.reshape(B, T, *l2I.shape[1:])
-    # 3) eligibility scan + Re/Im combine (B1 convention, as rtrl_dpd.py)
+    # 3) eligibility scan + Re/Im combine (split-real convention)
     g = {'Ce1r': gC1r, 'Ce1i': gC1i, 'Ce2r': gC2r, 'Ce2i': gC2i}
     for li, (Ab, Sp, lR, lI, kr, ki) in enumerate((
             (Ab1, S1p, l1R, l1I, 'Ab1r', 'Ab1i'),
@@ -298,7 +299,14 @@ def rflo_grads(P, Ab1, Ce1, Ab2, Ce2, z, tgt,
         hg['binr'] = hg['binr'] + gbr; hg['bini'] = hg['bini'] + gbi
     g.update(hg)
     if qf_grad is not None:
-        g = {k: qf_grad(v) for k, v in g.items()}
+        # `qf_grad` may be a dict keyed by gradient class -> PER-CLASS block exponents,
+        # matching the hardware datapath.  A single shared exponent is calibrated by
+        # whichever class is largest, so the small classes underflow wholesale: the spread
+        # between classes exceeds 10x, and the class that loses is gCe -- the one doing
+        # nearly all the ILA adaptation.  A plain callable is still accepted, and
+        # reproduces that single-exponent behaviour as a control.
+        g = ({k: qf_grad[k](v) for k, v in g.items()} if isinstance(qf_grad, dict)
+             else {k: qf_grad(v) for k, v in g.items()})
     return g, float(loss)
 
 
@@ -455,7 +463,7 @@ def main():
                 C1 = C1 - lr * torch.complex(g['Ce1r'], g['Ce1i'])
                 A2 = A2 - lr * torch.complex(g['Ab2r'], g['Ab2i'])
                 C2 = C2 - lr * torch.complex(g['Ce2r'], g['Ce2i'])
-                A1 = proj(A1); A2 = proj(A2)                  # H1 pole projection
+                A1 = proj(A1); A2 = proj(A2)                  # pole projection
                 hist.append(l)
             print(f"    [{tag}] epoch {ep}  post-inv loss={np.mean(hist[-len(starts):]):.3e}")
         mf = eval_ported(P, A1, C1, A2, C2, pa, X_te, tg)

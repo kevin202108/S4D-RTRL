@@ -14,6 +14,10 @@ env/
 .ipynb_checkpoints/
 .DS_Store
 
+# Experiment outputs (tables, JSON evidence, run plots, adapted checkpoints).
+# Every script writes here; nothing in it is an input.
+results/
+
 # Note: pretrained checkpoints (opendpd/save/**.pt), the APA_200MHz dataset
 # (opendpd/datasets/**), and rendered figures (figures/*.png) are TRACKED on
 # purpose so the repo reproduces end-to-end out of the box.

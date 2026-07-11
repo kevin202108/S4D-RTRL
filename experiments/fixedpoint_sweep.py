@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-fixedpoint_sweep.py -- Stage 3 step 1: fixed-point IN-THE-LOOP feasibility scan
+fixedpoint_sweep.py -- fixed-point IN-THE-LOOP feasibility scan of the learning path
 for the RFLO online-learning path of the full s4d_best DPD.
 
 Builds directly on rtrl_rflo_full.py (S1r: RFLO == BPTT verified in float64) and
@@ -9,7 +9,7 @@ quantizes the LEARNING datapath -- the part that is new hardware:
     * eligibility traces p                     [qf_trace]
     * error signals lambda                     [qf_lam]
     * gradients                                [qf_grad]
-    * adapted params {Abar, C_eff} storage     [after each update + H1 projection]
+    * adapted params {Abar, C_eff} storage     [after each update + pole projection]
 The frozen pointwise stack stays float (that is inference hardware, already covered
 by MP-DPD/DPD-NeuralEngine-style quantization; final eval also uses float inference
 so this scan isolates the learning path).
@@ -17,13 +17,13 @@ so this scan isolates the learning path).
 Two rounding modes for the parameter update, because SGD steps (lr*g ~ 1e-5) are
 far below the coefficient LSB at short wordlengths -- the classic fixed-point
 learning cliff. 'nearest' shows the cliff; 'stoch' (stochastic rounding) is the
-standard hardware fix (B5's wide accumulator is the alternative).
+standard hardware fix (a wide gradient accumulator is the alternative).
 
 Protocol per (W, rounding): the S1r gate-C perturb-recover run (shared perturbed
 start, {Abar,C_eff}-only RFLO SGD + pole projection 0.999, 6 epochs), final metrics
 vs the float64 reference. Feasibility gate: some W <= 16 within 0.5 dB of float.
 
-Run:  uv run fixedpoint_sweep.py
+Run:  uv run experiments/fixedpoint_sweep.py
 """
 import math
 import numpy as np
@@ -84,10 +84,34 @@ def probe_ranges(P, A1, C1, A2, C2, z, tgt, fl=500, nfr=6):
     return mx
 
 
+ADAPT_KEYS = ('Ab1', 'Ce1', 'Ab2', 'Ce2', 'Win', 'bin', 'Wo', 'bo', 'Ws', 'bs')
+
+
+def probe_grad_ranges(P, A1, C1, A2, C2, z, tgt, fl=500, nfr=6):
+    """Per-class gradient maxima -> {'grad_Ab1': ..., 'grad_Ws': ..., ...}.
+
+    `probe_ranges` only reports the max over ALL gradient tensors, which is dominated
+    by gC_eff (~2e-2).  Calibrating every class to that one exponent buries the small
+    ones: gW_skip peaks at 1.3e-3, i.e. below half an LSB of the shared W8 grid, so it
+    quantizes to zero.  FixedModel has always supported `grad_<key>` overrides (the
+    per-class block scaling its docstring promises) -- nothing populated them until now.
+
+    Merge the result into the `ranges` dict handed to FixedModel."""
+    mx = {'grad_' + k: 0.0 for k in ADAPT_KEYS}
+    T = z.shape[1]
+    for s in range(0, min(nfr * fl, T - fl), fl):
+        g, _ = rflo_grads(P, A1, C1, A2, C2, z[:, s:s + fl], tgt[:, s:s + fl],
+                          head_grads=True, in_grads=True)
+        for k in ADAPT_KEYS:
+            v = float(torch.complex(g[k + 'r'], g[k + 'i']).abs().max())
+            mx['grad_' + k] = max(mx['grad_' + k], v)
+    return mx
+
+
 # --------------------------------------------------------------------------- #
 def run_adapt(P, A1, C1, A2, C2, z, tgt, pa, X_te, tg, lr=0.2, fl=500, epochs=6,
               qfs=None, qpar=None, accum=1, qacc=None, qf_eval=None):
-    """accum>1 = B5 gradient accumulation: sum `accum` frame-gradients in a (wide,
+    """accum>1 = gradient accumulation: sum `accum` frame-gradients in a (wide,
     optionally quantized via qacc) accumulator, apply the MEAN every accum frames."""
     proj = lambda A: torch.where(A.abs() > RAD, A / A.abs() * RAD, A)
     if qpar is not None:
@@ -229,9 +253,9 @@ def main():
         print(f"  W{w:2d} learn | {m['ACLR']:7.2f} / {m['EVM']:7.2f} | "
               f"{d:+.2f} dB | {stable}")
 
-    # ---- sweep 4: B5 gradient accumulation over K frames (wide W16 accumulator),
+    # ---- sweep 4: gradient accumulation over K frames (wide W16 accumulator),
     # on top of the winning split config (state/par @W16, learning @W8) ----
-    print("\n[sweep 4] B5 accumulate-K (W16 accumulator) on split W8 config")
+    print("\n[sweep 4] accumulate-K (W16 accumulator) on split W8 config")
     qacc, _ = make_q(16, mx['grad'] * 16, margin=2.0)        # wide: headroom for K sums
     qt1, _ = make_qtrace_scaled(8, A1o); qt2, _ = make_qtrace_scaled(8, A2o)
     ql8, _ = make_q(8, mx['lam']); qg8, _ = make_q(8, mx['grad'])
@@ -274,7 +298,7 @@ def main():
               f"within 0.5 dB of float: {best}")
         return 0
     print("FAIL: no wordlength <= 16 matched float within 0.5 dB -- needs wide "
-          "accumulator (B5) / per-channel scaling before RTL.")
+          "accumulator / per-channel scaling before RTL.")
     return 1
 
 

@@ -3,7 +3,7 @@
 ila_frontend.py -- Indirect Learning Architecture (ILA) front-end:
 loop-delay estimation + gain/phase normalization + observation model.
 
-Why this exists (design-space A3/A4/A5, K1 in rtrl_design_space.md):
+Why this exists:
     In ILA the post-inverse is trained on the PA OUTPUT z to reproduce the PA
     INPUT y (= the DPD output). Before any learning can work, z must be aligned
     to y in TIME (the DAC->PA->ADC feedback loop delay, integer + fractional)
@@ -31,7 +31,7 @@ Verified (sandbox, band-limited signal, N=16384):
     20 dB  -> D err 5e-4, residual = noise floor (1e-1)
     delays 0.13 .. 100.27 samples all recovered exactly (clean).
 
-Pure NumPy. Self-test:  uv run ila_frontend.py   (or python ila_frontend.py)
+Pure NumPy. Self-test:  uv run experiments/ila_frontend.py
 """
 import numpy as np
 
